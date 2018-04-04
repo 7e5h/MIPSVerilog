@@ -63,7 +63,7 @@ module Assignment3;
 	wire[1:0] ALUOp;
 	Control con(regDest,regWrite2,ALUSrc,ALUOp ,memWrite,memRead2,memToReg,PCSrc,jump,branch,IMOut[31:26],clockWire);
 
-
+    ALUControl aluc(Ctl,ALUOp,IMOut[5:0]);
 
 	initial								
 		begin				
@@ -92,7 +92,17 @@ endmodule
 
 */
 
+module ALUControl(ALUSig, ALUOp,funcCode);
+    input [5:0] funcCode;
+    input [1:0] ALUOp;
+    output [2:0] ALUSig;
+    reg    [2:0] ALUSig;
+    always @(ALUOp,funcCode) begin
+        ALUSig = 3'b000;
+    end
 
+
+endmodule
 
 
 
