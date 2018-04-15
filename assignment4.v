@@ -1,9 +1,10 @@
 /*
-	File: assignment3.v
+	File: assignment4.v
 	Author: Samuel Britton
 	Modules:
-		Assignment3  	-  The "main" testbench that runs and tests other modules
-		Control 		- The Control unit recieves an opcode and outputs the appropriate output signals
+		Assignment4  	-  The "main" testbench that runs and tests other modules
+		ALUControl		-  The ALUControl module takes the instruction in and decides the operation for the ALU to preform
+		Control 		-  The Control unit recieves an opcode and outputs the appropriate output signals
 		DataMemory      -  The DataMemory module that stores 1024 32 bit values to simulate memory
 		SignExtender 	-  The SignExtender module that takes 16 bit values and appends 0s to make it 32 bits
 		RegisterFile	-  The RegisterFile contains 32 32 bit registers that contain values
@@ -19,7 +20,7 @@
 	Author: Samuel Britton
 	Ports: none
 */
-module Assignment3;
+module Assignment4;
 	wire [31:0] PCtoAdd; 
 	wire [31:0] addToPC;
 	Add i1(addToPC,PCtoAdd,32'd1);		
@@ -35,7 +36,7 @@ module Assignment3;
 
 	reg [31:0]	aluA;
 	reg [31:0]	aluB;
-	reg [3:0] Ctl;
+	wire [3:0] Ctl;
 	wire[31:0]	aluOut;
 	reg zero;
 	MIPSALU alu(aluOut, zero, Ctl, aluA, aluB);
@@ -60,45 +61,54 @@ module Assignment3;
 	
 	wire regDest,ALUSrc,memWrite,memToReg,PCSrc,jump,branch;
 	wire regWrite2,memRead2;
-	wire[1:0] ALUOp;
-	Control con(regDest,regWrite2,ALUSrc,ALUOp ,memWrite,memRead2,memToReg,PCSrc,jump,branch,IMOut[31:26],clockWire);
+	Control con(regDest,regWrite2,ALUSrc,memWrite,memRead2,memToReg,PCSrc,jump,branch,IMOut[31:26],clockWire);
 
-    ALUControl aluc(Ctl,ALUOp,IMOut[5:0]);
+    ALUControl aluc(Ctl,IMOut);
 
 	initial								
 		begin				
 			//This fills the Instruction memory with the address of the data to be read in
-			$readmemb( "data.dat", im1.my_memory); //fills my_memory of the instruction memory
+			$readmemb( "program2.dat", im1.my_memory); //fills my_memory of the instruction memory
 			
 			//No additional tests have to be in this block as the data file has cases for each of the required commands
-			$monitor("Opcode:%b regDest:%b, regWrite:%b, ALUSrc:%b, memWrite:%b, memRead:%b ,memToReg:%b, PCSrc:%b, jump:%b, branch,:%b ",IMOut[31:26],regDest,regWrite2,ALUSrc,memWrite,memRead2,memToReg,PCSrc,jump,branch);
+			$monitor("Program binary:%b ALUSig:%b",IMOut,Ctl);
 
 			#400 $finish;	//After 40 clock ticks it is terminated as to not let it run forever
 		end			
 endmodule
 
-//ALUControl unit time
 /*
-	Oh hey go back to to the old control and add a special case for mul
-	Apparently program 3 also needs 4 bits for aluop
-	AKUcontrol only cares bout that extra func code when we've got an R-type
-	Some of them do the same thing
-	lw sw and add
-	beq and bne are sub
-	j - anything that doeesn't touch the alu can use the same code (and maybe jal as well)
-	Mul uses it
-	He's then saying that we might need more flags in the initial control 
-
-
+	Module: ALUControl - The ALUControl module takes the instruction in and decides the operation for the ALU to preform
+	Author: Samuel Britton
+	Ports: 
+		ALUSig(O/P) 		- The 4-bit value that determines what the ALU is to do
+		Instruction(I/P)    - The 32-bit value used as input to figure out what ALUSig to use
 */
+module ALUControl(ALUSig,Instruction);
+    input [31:0] Instruction;
+    output [3:0] ALUSig;
+    reg    [3:0] ALUSig;
+    always @(Instruction) begin
+		casex(Instruction)
+			(32'b000000xxxxxxxxxxxxxxxxxxxx100000):ALUSig = 4'b0010;//add
+			(32'b000000xxxxxxxxxxxxxxxxxxxx100100):ALUSig = 4'b0000;//and
+			(32'b000000xxxxxxxxxxxxxxxxxxxx011010):ALUSig = 4'b0001;//div
+			(32'b000000xxxxxxxxxxxxxxxxxxxx011000):ALUSig = 4'b0011;//mul + mult
+			(32'b000000xxxxxxxxxxxxxxxxxxxx100101):ALUSig = 4'b0001;//or
+			(32'b000000xxxxxxxxxxxxxxxxxxxx000000):ALUSig = 4'b0100;//sl
+			(32'b000000xxxxxxxxxxxxxxxxxxxx101010):ALUSig = 4'b0111;//slt
+			(32'b000000xxxxxxxxxxxxxxxxxxxx000011):ALUSig = 4'b1001;//sra
+			(32'b000000xxxxxxxxxxxxxxxxxxxx000010):ALUSig = 4'b0101;//srl
+			(32'b000000xxxxxxxxxxxxxxxxxxxx100010):ALUSig = 4'b0110;//sub
 
-module ALUControl(ALUSig, ALUOp,funcCode);
-    input [5:0] funcCode;
-    input [1:0] ALUOp;
-    output [2:0] ALUSig;
-    reg    [2:0] ALUSig;
-    always @(ALUOp,funcCode) begin
-        ALUSig = 3'b000;
+			(32'b10x011xxxxxxxxxxxxxxxxxxxx100000):ALUSig = 4'b0010;//lw and sw
+
+			(32'b001111xxxxxxxxxxxxxxxxxxxxxxxxxx):ALUSig = 4'b1000;//lui
+			(32'b000100xxxxxxxxxxxxxxxxxxxxxxxxxx):ALUSig = 4'b1010;//beq
+			(32'b000101xxxxxxxxxxxxxxxxxxxxxxxxxx):ALUSig = 4'b1011;//bne
+			default: ALUSig = 4'b1111;
+			//The remaining commands that need to be supported (j,jal,jr,mfhi,mflo,syscall) don't need the alu ((AS FAR AS I KNOW))
+		endcase
     end
 
 
@@ -122,107 +132,78 @@ endmodule
 		IMin(I/P)    - The 6 bit value that determines the other output
 		clock(I/P)	 - The clock that keeps the syncranous element in time
 */
-module Control(regDest, regWrite, ALUSrc, ALUOp, memWrite, memRead, memToReg, PCSrc,jump,branch, IMin,clock);
+module Control(regDest, regWrite, ALUSrc, memWrite, memRead, memToReg, PCSrc,jump,branch, IMin,clock);
 	input [5:0] IMin;
 	input zero,clock;
-	output [1:0] ALUOp;
 	output regDest,regWrite,ALUSrc,memWrite,memRead,memToReg,PCSrc,jump,branch;
-	reg [1:0] ALUOp;
 	reg regDest,regWrite,ALUSrc,memWrite,memRead,memToReg,PCSrc,jump,branch;
 	always @(IMin) begin
 		case(IMin[5:0])
-		(6'b000000): 
-		begin //Any of the R-types
-			regDest = 1;
-			ALUSrc = 0;
-			memToReg = 0;
-			regWrite = 1;
-			memRead = 0;
-			memWrite = 0;
-			jump = 0;
-			branch = 0;
-			ALUOp = 2'b10;
-		end
-
-		(6'b001111): 
-		begin //the LUI command
-			regDest  = 1;
-			jump = 0;
-			branch = 0;
-			memRead = 0;
-			memToReg = 0;
-			ALUOp = 2'b10;
-			memWrite = 0;
-			ALUSrc = 1;
-			regWrite = 1;
-		end
-
-		(6'b000100):
-		begin //beq
-			ALUSrc = 0;//
-			regWrite = 0;//
-			memRead = 0;//
-			memWrite = 0;//
-			branch = 1;//
-			jump = 0;//
-			ALUOp = 2'b01;//
-		end
-		(6'b000101):
-		begin //bne
-			ALUSrc = 0;//
-			regWrite = 0;//
-			memRead = 0;//
-			memWrite = 0;//
-			branch = 1;//
-			jump = 0;//
-			ALUOp = 2'b11;//
-		end
-		(6'b000101):
-		begin //j
-			regWrite = 0;//
-			memRead = 0;//
-			memWrite = 0;//
-			branch = 0;//
-			jump = 1;//
-		end
-		(6'b000011):
-		begin //jal - requires a register value to be stored (The incremented program counter) //This will be tough in the final project cause we'll need to save the address later
-			regWrite = 0;//"That was a complicated instruction"
-			ALUSrc = 1;//This won't use the ALU
-			regWrite = 0;//
-			memRead = 1;//
-			memWrite = 0;//
-			branch = 0;//
-			jump = 1;//
-			ALUOp = 2'b00;//
-		end
-		(6'b100011): 
-		begin //lw
-			regDest = 0;//
-			regWrite = 1;//
-			ALUSrc = 1;//
-			memRead = 1;//
-			memWrite = 0;//
-			branch = 0;//
-			ALUOp = 2'b00;//
-		end
-		(6'b101011): 
-		begin //sw
-			regWrite = 0;//
-			ALUSrc = 0;//
-			memRead = 0;//
-			memWrite = 1;//
-			branch = 0;//
-			ALUOp = 3'b00;//
-		end
-		default: 
-		begin
-		
-		end
-	endcase
+			(6'b000000): begin //Any of the R-types
+				regDest = 1;
+				ALUSrc = 0;
+				memToReg = 0;
+				regWrite = 1;
+				memRead = 0;
+				memWrite = 0;
+				jump = 0;
+				branch = 0;end
+			(6'b001111): begin //the LUI command
+				regDest  = 1;
+				jump = 0;
+				branch = 0;
+				memRead = 0;
+				memToReg = 0;
+				memWrite = 0;
+				ALUSrc = 1;
+				regWrite = 1;end
+			(6'b000100):begin //beq
+				ALUSrc = 0;
+				regWrite = 0;
+				memRead = 0;
+				memWrite = 0;
+				branch = 1;
+				jump = 0;end
+			(6'b000101):begin //bne
+				ALUSrc = 0;
+				regWrite = 0;
+				memRead = 0;
+				memWrite = 0;
+				branch = 1;
+				jump = 0;end
+			(6'b000101):begin //j
+				regWrite = 0;
+				memRead = 0;
+				memWrite = 0;
+				branch = 0;
+				jump = 1;end
+			(6'b000011):begin //jal - requires a register value to be stored (The incremented program counter) //This will be tough in the final project cause we'll need to save the address later
+				regWrite = 0;//"That was a complicated instruction"
+				ALUSrc = 1;//This won't use the ALU
+				regWrite = 0;
+				memRead = 1;
+				memWrite = 0;
+				branch = 0;
+				jump = 1;end
+			(6'b100011): begin //lw
+				regDest = 0;
+				regWrite = 1;
+				ALUSrc = 1;
+				memRead = 1;
+				memWrite = 0;
+				branch = 0;end
+			(6'b101011): begin //sw
+				regWrite = 0;
+				ALUSrc = 0;
+				memRead = 0;
+				memWrite = 1;
+				branch = 0;end
+			default: 
+			begin
+			end
+		endcase
 	end
 endmodule
-
 
 /*
 	Module: DataMemory - The DataMemory module that stores 1024 32 bit values to simulate memory
@@ -265,8 +246,6 @@ module SignExtender(out,in);
 		output [31:0] out;
 		assign out = {{16{in[15]}},in};
 endmodule
-
-
 /*
 	Module: RegisterFile - The RegisterFile contains 32 32 bit registers that contain values
 	Author: Dr. Richard A. Goodrum, Ph.D.
@@ -291,9 +270,7 @@ module RegisterFile(Data1,Data2,WriteReg,WriteData,RegWrite,Read1,Read2,clock);
   assign Data1 = RF[Read1];
   assign Data2 = RF[Read2];
 
-  always
-    begin
-      // write the register with new value if Regwrite is high
+  always begin// write the register with new value if Regwrite is high
       @(clock) 
       	if (RegWrite) 
       		RF[WriteReg] <= WriteData;
@@ -322,8 +299,15 @@ module MIPSALU (ALUOut, Zero, ALUctl, A, B );
 				0: ALUOut <= A & B;
 				1: ALUOut <= A | B;
 				2: ALUOut <= A + B;
+				3: ALUOut <= A * B;
+				4: ALUOut <= A << B;
+				5: ALUOut <= A >> B;
 				6: ALUOut <= A - B;
 				7: ALUOut <= A < B ? 1 : 0;
+				8: ALUOut <= A << 16;
+				9: ALUOut <= A <<< B;
+				10: ALUOut <= A == B ? 1 : 0;
+				11: ALUOut <= A != B ? 1 : 0;
 				12: ALUOut <= ~(A | B); // nor
 				default: ALUOut <= 0;
 			endcase
