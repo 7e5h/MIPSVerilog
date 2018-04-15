@@ -361,7 +361,7 @@ module IM(word, addr,clock);
 	input [31:0] addr;
 	output [31:0] word;
 	reg [31:0] word;
-	reg [31:0] my_memory [0:255]; //we put the contents from data in this. This is 8 bit words of length 256
+	reg [31:0] my_memory [0:2048]; //we put the contents from data in this. This is 8 bit words of length 256
 	always @(addr)
 		word[31:0] = my_memory[addr]; //outputs the word for every new address
 	
